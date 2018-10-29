@@ -1,0 +1,163 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: Install a Cloudify Manager on AWS using the AMI.
+
+Parameters:
+
+  InstancesKeyName:
+    Description: The name of a key in your EC2 Account/Region.
+    Type: String
+
+  AllowedSSHCIDRIP:
+    Description: The CIDR of an allowed IP or Subnet that is allowed to SSH into the Cloudify Manager.
+    Type: String
+    Default: "0.0.0.0/0"
+
+  HTTPPort:
+    Description: The port used for HTTP or HTTPS communications. Either 80 or 443.
+    Type: String
+    Default: "80"
+
+Mappings:
+
+  AWSRegionToAMI:
+    ap-south-1:
+      AMI: ami-02684173d40176151
+    eu-west-3:
+      AMI: ami-0a9d724c430e14f9c
+    eu-west-2:
+      AMI: ami-0263e621cb1863745
+    eu-west-1:
+      AMI: ami-0c003fc4fc0b27167
+    ap-northeast-2:
+      AMI: ami-0ea34ac010f094c68
+    ap-northeast-1:
+      AMI: ami-0ab68d3cc223d3ac0
+    sa-east-1:
+      AMI: ami-0158531eca0d8023c
+    ca-central-1:
+      AMI: ami-09b3e4eb477358bda
+    ap-southeast-1:
+      AMI: ami-06d44eb7c2efd2b42
+    ap-southeast-2:
+      AMI: ami-013ee6eed49a817d0
+    eu-central-1:
+      AMI: ami-04a2b214c425c657e
+    us-east-1:
+      AMI: ami-0ace11696076cc562
+    us-east-2:
+      AMI: ami-0120b2cc79038bf90
+    us-west-1:
+      AMI: ami-0d4932e5bda5023d5
+    us-west-2:
+      AMI: ami-0ca86a529ccba5cec
+
+Resources:
+
+  CloudifyManagerInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvdcz
+          Ebs:
+            VolumeSize: 40
+      KeyName: !Ref InstancesKeyName
+      ImageId: !FindInMap [AWSRegionToAMI, !Ref "AWS::Region", AMI]
+      InstanceType: t2.large
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeviceIndex: "0"
+          GroupSet:
+            - !Ref CloudifyManagerSG
+          SubnetId: !Ref CloudifyManagerSubnet
+      Tags:
+        - Key: Name
+          Value: !Sub CloudifyManagerInstance-${AWS::StackName}
+
+  CloudifyManagerSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref CloudifyManagerVPC
+      GroupDescription: Access to the load balancer that sits in front of ECS
+      SecurityGroupIngress:
+        - Description: Permits SSH connections.
+          IpProtocol: "tcp"
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref AllowedSSHCIDRIP
+        - Description: Permits HTTP connections to UI.
+          IpProtocol: "tcp"
+          FromPort: !Ref HTTPPort
+          ToPort: !Ref HTTPPort
+          CidrIp: 0.0.0.0/0
+        - Description: Permits REST connections to API.
+          IpProtocol: "tcp"
+          FromPort: 5671
+          ToPort: 5671
+          CidrIp: 0.0.0.0/0
+        - Description: Permits Cloudify Agent connections to RabbitMQ.
+          IpProtocol: "tcp"
+          FromPort: 53333
+          ToPort: 53333
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub CloudifyManagerSG-${AWS::StackName}
+
+  CloudifyManagerPublicRTA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref CloudifyManagerPublicRT
+      SubnetId: !Ref CloudifyManagerSubnet
+
+  DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties:
+      RouteTableId: !Ref CloudifyManagerPublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref CloudifyManagerIG
+
+  CloudifyManagerPublicRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref CloudifyManagerVPC
+      Tags:
+        - Key: Name
+          Value: !Sub CloudifyManagerPublicRT-${AWS::StackName}
+
+  CloudifyManagerSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref CloudifyManagerVPC
+      CidrBlock: 10.0.0.0/25
+      Tags:
+        - Key: Name
+          Value: !Sub CloudifyManagerSubnet-${AWS::StackName}
+
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref CloudifyManagerIG
+      VpcId: !Ref CloudifyManagerVPC
+
+  CloudifyManagerIG:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub CloudifyManagerIG-${AWS::StackName}
+
+  CloudifyManagerVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/24
+      Tags:
+        - Key: Name
+          Value: !Sub CloudifyManagerVPC-${AWS::StackName}
+
+Outputs:
+
+    URL:
+        Description: The URL of the Cloudify VM
+        Value: !GetAtt CloudifyManagerInstance.PublicIp
